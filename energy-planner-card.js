@@ -1,7 +1,7 @@
 /*
  * Energy Planner Lovelace card
  * @customElement energy-planner-card
- * @version 1.2.0
+ * @version 1.3.0
  * @description Dependency-free, read-only price view with an explicit plan-only form.
  * Configure at least: { type: "custom:energy-planner-card", price_sensor: "sensor..." }.
  */
@@ -15,6 +15,7 @@
   const DEFAULT_CONFIG = {
     title: "Energy Planner",
     price_mode: "all_in",
+    chart_type: "bar",
     currency: DEFAULT_CURRENCY,
     show_spot: true,
     fixed_cost_sensor: "",
@@ -36,13 +37,14 @@
     .metric { padding: 8px; border-radius: 8px; background: var(--secondary-background-color); }
     .metric strong { display: block; font-size: 1.1rem; margin-top: 3px; }
     .timeline { margin-top: 4px; }
-    .price-chart { display: block; width: 100%; height: 300px; overflow: visible; touch-action: none; }
+    .price-chart { display: block; width: 100%; height: 320px; overflow: visible; touch-action: none; }
     .chart-grid { stroke: var(--divider-color); stroke-width: 1; stroke-dasharray: 2 4; }
     .chart-zero { stroke: var(--secondary-text-color); stroke-dasharray: none; stroke-width: 1.4; opacity: .85; }
     .chart-axis { fill: var(--secondary-text-color); font-size: 11px; }
     .chart-axis-zero { fill: var(--primary-text-color); font-weight: 600; }
     .chart-day-divider { stroke: var(--divider-color); stroke-width: 1; stroke-dasharray: 3 5; opacity: .8; }
     .chart-area { fill: var(--accent-color); opacity: .14; }
+    .chart-bar { fill: var(--accent-color); opacity: .78; }
     .chart-line { fill: none; stroke: var(--accent-color); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
     .chart-spot-line { fill: none; stroke: var(--secondary-text-color); stroke-width: 1.7; stroke-dasharray: 5 4; stroke-linecap: round; stroke-linejoin: round; }
     .chart-current { stroke: var(--primary-color); stroke-width: 1.5; stroke-dasharray: 4 3; }
@@ -52,6 +54,7 @@
     .chart-interaction:focus-visible { stroke: var(--primary-color); stroke-width: 1; stroke-dasharray: 3 3; }
     .chart-hover-line { stroke: var(--primary-color); stroke-width: 1.5; stroke-dasharray: 3 3; }
     .chart-hover-dot { fill: var(--primary-color); stroke: var(--card-background-color); stroke-width: 2; }
+    .chart-hover-bar { fill: var(--primary-color); opacity: .22; }
     .chart-tooltip { pointer-events: none; }
     .chart-tooltip-box { fill: var(--card-background-color); stroke: var(--divider-color); stroke-width: 1; opacity: .96; }
     .chart-tooltip-text { fill: var(--primary-text-color); font-size: 11px; }
@@ -76,8 +79,9 @@
       overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     form { display: grid; gap: 9px; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
     label { display: grid; gap: 4px; font-size: .8rem; }
-    input { box-sizing: border-box; width: 100%; padding: 8px; color: inherit;
+    input, select { box-sizing: border-box; width: 100%; padding: 8px; color: inherit;
       background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 4px; }
+    input:disabled { opacity: .7; }
     button { padding: 9px 12px; border: 0; border-radius: 5px; color: var(--text-primary-color, #fff);
       background: var(--primary-color); cursor: pointer; font: inherit; }
     button[disabled] { opacity: .55; cursor: wait; }
@@ -118,6 +122,11 @@
   function formatMoney(value, currency) {
     const parsed = number(value);
     return parsed === null ? "—" : `${parsed.toFixed(2)} ${currency}`;
+  }
+
+  function formatPower(value) {
+    const parsed = number(value);
+    return parsed === null ? "—" : `${parsed.toFixed(2)} kW`;
   }
 
   function formatTime(value) {
@@ -213,6 +222,20 @@
       if (!this._config) return;
       if (!this._hass) return this._renderMessage("Waiting for Home Assistant…");
 
+      // Home Assistant refreshes hass frequently. Keep the live form node so
+      // a refresh cannot clear a value or move focus while someone is typing.
+      const existingForm = this._plannerOpen ? this._root.querySelector("form") : null;
+      const activeElement = this._root.activeElement;
+      const activeFieldName = existingForm && activeElement?.form === existingForm
+        ? activeElement.name
+        : null;
+      const selectionStart = activeElement && typeof activeElement.selectionStart === "number"
+        ? activeElement.selectionStart
+        : null;
+      const selectionEnd = activeElement && typeof activeElement.selectionEnd === "number"
+        ? activeElement.selectionEnd
+        : null;
+
       const priceAttrs = attributes(this._hass, this._config.price_sensor);
       const points = Array.isArray(priceAttrs.data) ? priceAttrs.data : [];
       const fixedAttrs = attributes(this._hass, this._config.fixed_cost_sensor);
@@ -253,13 +276,29 @@
         this._render();
       });
       wrap.append(plannerToggle);
+      let renderedForm = null;
       if (this._plannerOpen) {
         const plannerSection = make("div", undefined, "planner-section");
-        plannerSection.append(this._planForm());
+        renderedForm = existingForm || this._planForm();
+        plannerSection.append(renderedForm);
         wrap.append(plannerSection);
       }
       card.append(wrap);
       this._root.append(card);
+
+      if (activeFieldName && renderedForm) {
+        const field = Array.from(renderedForm.elements).find((element) => element.name === activeFieldName);
+        if (field) {
+          field.focus({ preventScroll: true });
+          if (selectionStart !== null && typeof field.setSelectionRange === "function") {
+            try {
+              field.setSelectionRange(selectionStart, selectionEnd ?? selectionStart);
+            } catch (_error) {
+              // Date and number inputs do not expose a text selection range.
+            }
+          }
+        }
+      }
     }
 
     _metric(label, value) {
@@ -280,6 +319,9 @@
 
       const showSpot = this._config.show_spot && key !== "spot_price_per_kwh"
         && mainSeries.some((item) => item.spot !== null);
+      const chartType = ["line", "bar", "area"].includes(this._config.chart_type)
+        ? this._config.chart_type
+        : "line";
       const plottedValues = mainSeries.flatMap((item) => (
         showSpot && item.spot !== null ? [item.value, item.spot] : [item.value]
       ));
@@ -290,22 +332,23 @@
       const domainMin = min < 0 ? Math.min(0, min - padding) : min - padding;
       const domainMax = max + padding;
       const width = 720;
-      const height = 300;
+      const height = 320;
       const left = 50;
       const right = 12;
-      const top = 14;
-      const bottom = 56;
+      const top = 16;
+      const bottom = 60;
       const plotWidth = width - left - right;
       const plotHeight = height - top - bottom;
       const x = (index) => left + (index / Math.max(1, mainSeries.length - 1)) * plotWidth;
       const y = (value) => top + ((domainMax - value) / (domainMax - domainMin || 1)) * plotHeight;
+      const baseline = domainMin <= 0 && domainMax >= 0 ? y(0) : top + plotHeight;
       const mainPath = mainSeries.map((item, index) => `${index ? "L" : "M"}${x(index)} ${y(item.value)}`).join(" ");
-      const areaPath = `${mainPath} L${x(mainSeries.length - 1)} ${top + plotHeight} L${x(0)} ${top + plotHeight} Z`;
+      const areaPath = `${mainPath} L${x(mainSeries.length - 1)} ${baseline} L${x(0)} ${baseline} Z`;
       const svg = svgElement("svg", {
         class: "price-chart",
         viewBox: `0 0 ${width} ${height}`,
         role: "img",
-        "aria-label": `Price chart with ${mainSeries.length} points from ${formatPrice(min, this._config.currency)} to ${formatPrice(max, this._config.currency)}`,
+        "aria-label": `${chartType} price chart with ${mainSeries.length} points from ${formatPrice(min, this._config.currency)} to ${formatPrice(max, this._config.currency)}`,
       });
       const title = svgElement("title");
       title.textContent = "Electricity price timeline";
@@ -359,7 +402,22 @@
         svg.append(label);
       });
 
-      svg.append(svgElement("path", { class: "chart-area", d: areaPath }));
+      if (chartType === "area") {
+        svg.append(svgElement("path", { class: "chart-area", d: areaPath }));
+      } else if (chartType === "bar") {
+        const barWidth = Math.max(1.5, Math.min(16, (plotWidth / Math.max(1, mainSeries.length)) * 0.76));
+        mainSeries.forEach((item, index) => {
+          const valueY = y(item.value);
+          svg.append(svgElement("rect", {
+            class: "chart-bar",
+            x: x(index) - barWidth / 2,
+            y: Math.min(valueY, baseline),
+            width: barWidth,
+            height: Math.max(1, Math.abs(valueY - baseline)),
+            rx: Math.min(2, barWidth / 3),
+          }));
+        });
+      }
       if (showSpot) {
         const spotSeries = mainSeries
           .map((item, index) => ({ ...item, index }))
@@ -368,15 +426,17 @@
           .map((item, index) => `${index ? "L" : "M"}${x(item.index)} ${y(item.spot)}`).join(" ");
         svg.append(svgElement("path", { class: "chart-spot-line", d: spotPath }));
       }
-      svg.append(svgElement("path", { class: "chart-line", d: mainPath }));
-      mainSeries.forEach((item, index) => {
-        const dot = svgElement("circle", { class: "chart-dot", cx: x(index), cy: y(item.value), r: 2.5 });
-        const spotText = showSpot && item.spot !== null ? `; spot ${formatPrice(item.spot, this._config.currency)}` : "";
-        const pointTitle = svgElement("title");
-        pointTitle.textContent = `${formatTime(item.point.start_time)}: ${formatPrice(item.value, this._config.currency)}${spotText}`;
-        dot.append(pointTitle);
-        svg.append(dot);
-      });
+      if (chartType !== "bar") {
+        svg.append(svgElement("path", { class: "chart-line", d: mainPath }));
+        mainSeries.forEach((item, index) => {
+          const dot = svgElement("circle", { class: "chart-dot", cx: x(index), cy: y(item.value), r: 2.5 });
+          const spotText = showSpot && item.spot !== null ? `; spot ${formatPrice(item.spot, this._config.currency)}` : "";
+          const pointTitle = svgElement("title");
+          pointTitle.textContent = `${formatTime(item.point.start_time)}: ${formatPrice(item.value, this._config.currency)}${spotText}`;
+          dot.append(pointTitle);
+          svg.append(dot);
+        });
+      }
 
       const now = new Date();
       const currentIndex = mainSeries.findIndex(({ point }) => {
@@ -397,6 +457,9 @@
       const hoverLayer = svgElement("g", { visibility: "hidden" });
       const hoverLine = svgElement("line", { class: "chart-hover-line", x1: left, x2: left, y1: top, y2: top + plotHeight });
       const hoverDot = svgElement("circle", { class: "chart-hover-dot", cx: left, cy: y(mainSeries[0].value), r: 4 });
+      const hoverBar = chartType === "bar"
+        ? svgElement("rect", { class: "chart-hover-bar", x: left, y: top, width: 1, height: 1, rx: 2 })
+        : null;
       const tooltip = svgElement("g", { class: "chart-tooltip" });
       const tooltipBox = svgElement("rect", { class: "chart-tooltip-box", x: 0, y: 0, width: 174, height: showSpot ? 60 : 44, rx: 5 });
       const tooltipTime = svgElement("text", { class: "chart-tooltip-text chart-tooltip-time", x: 10, y: 16 });
@@ -404,7 +467,9 @@
       const tooltipSpot = svgElement("text", { class: "chart-tooltip-text", x: 10, y: 51 });
       tooltip.append(tooltipBox, tooltipTime, tooltipMain);
       if (showSpot) tooltip.append(tooltipSpot);
-      hoverLayer.append(hoverLine, hoverDot, tooltip);
+      hoverLayer.append(hoverLine);
+      if (hoverBar) hoverLayer.append(hoverBar);
+      hoverLayer.append(hoverDot, tooltip);
       svg.append(hoverLayer);
 
       const liveRegion = make("div", "", "sr-only");
@@ -443,6 +508,13 @@
         hoverLine.setAttribute("x2", pointX);
         hoverDot.setAttribute("cx", pointX);
         hoverDot.setAttribute("cy", pointY);
+        if (hoverBar) {
+          const barWidth = Math.max(1.5, Math.min(16, (plotWidth / Math.max(1, mainSeries.length)) * 0.76));
+          hoverBar.setAttribute("x", pointX - barWidth / 2);
+          hoverBar.setAttribute("y", Math.min(pointY, baseline));
+          hoverBar.setAttribute("width", barWidth);
+          hoverBar.setAttribute("height", Math.max(1, Math.abs(pointY - baseline)));
+        }
         tooltip.setAttribute("transform", `translate(${tooltipX}, ${tooltipY})`);
         tooltipBox.setAttribute("height", tooltipHeight);
         tooltipTime.textContent = `${formatChartDate(item.point.start_time)} · ${formatChartTime(item.point.start_time)}`;
@@ -545,17 +617,71 @@
       block.append(this._metric("Window", plan.start_time ? `${formatTime(plan.start_time)} → ${formatTime(plan.end_time)}` : (plan.reason || "Unavailable")));
       block.append(this._metric("Estimated cost", formatMoney(plan.estimated_cost, this._config.currency)));
       if (plan.estimated_saving_vs_current != null) block.append(this._metric("Saving", formatMoney(plan.estimated_saving_vs_current, this._config.currency)));
+      if (plan.average_power_kw != null) block.append(this._metric("Average power", formatPower(plan.average_power_kw)));
+      const utilization = number(plan.historical_utilization_percent);
+      if (utilization !== null) {
+        block.append(this._metric("Meter history", `${utilization.toFixed(1)}% active`));
+      }
       return block;
     }
 
     _planForm() {
       const form = document.createElement("form");
-      form.append(this._input("Appliance ID", "appliance_id", "text", "dishwasher"));
+      const energySources = this._energySources();
+      const energyByEntity = new Map(energySources.map((source) => [source.entity_id, source]));
+      const energyOptions = [
+        { value: "", label: energySources.length ? "Custom appliance (manual power)" : "Custom appliance" },
+        ...energySources.map((source) => ({
+          value: source.entity_id,
+          label: `${source.label} (${source.unit})`,
+        })),
+      ];
+      const energyField = this._select("Device / energy meter", "energy_entity", energyOptions);
+      const energySelect = energyField.querySelector("select");
+      form.append(energyField);
+
+      const applianceField = this._input("Appliance ID", "appliance_id", "text", "dishwasher");
+      const applianceInput = applianceField.querySelector("input");
+      form.append(applianceField);
       form.append(this._input("Duration (minutes)", "duration_minutes", "number", "60", { min: 15, max: 1440, step: 15 }));
       const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
       form.append(this._input("Finish by", "deadline", "datetime-local", localDateTime(deadline)));
       form.append(this._input("Earliest start", "earliest_start", "datetime-local", localDateTime(new Date())));
-      form.append(this._input("Average power (kW)", "average_power_kw", "number", "1", { min: 0.001, max: 100, step: 0.001 }));
+      const powerField = this._input("Average power (kW)", "average_power_kw", "number", "1", { min: 0.001, max: 100, step: 0.001 });
+      const powerInput = powerField.querySelector("input");
+      const powerNote = make("span", "Used for a custom appliance.", "muted");
+      powerField.append(powerNote);
+      form.append(powerField);
+
+      let manualApplianceId = applianceInput.value;
+      let manualPowerValue = powerInput.value;
+      const syncSelectedEnergyEntity = () => {
+        const source = energyByEntity.get(energySelect.value);
+        if (source) {
+          manualApplianceId = applianceInput.value || manualApplianceId;
+          manualPowerValue = powerInput.value || manualPowerValue;
+          applianceInput.value = source.label.slice(0, 64);
+          applianceInput.readOnly = true;
+          powerInput.value = "";
+          powerInput.disabled = true;
+          powerInput.required = false;
+          powerNote.textContent = "Estimated from this meter’s recorded history when submitted.";
+          return;
+        }
+        applianceInput.readOnly = false;
+        applianceInput.value = manualApplianceId || "dishwasher";
+        powerInput.disabled = false;
+        powerInput.required = true;
+        powerInput.value = manualPowerValue || "1";
+        powerNote.textContent = "Used for a custom appliance.";
+      };
+      energySelect.addEventListener("change", syncSelectedEnergyEntity);
+      applianceInput.addEventListener("input", () => {
+        if (!applianceInput.readOnly) manualApplianceId = applianceInput.value;
+      });
+      powerInput.addEventListener("input", () => {
+        if (!powerInput.disabled) manualPowerValue = powerInput.value;
+      });
       const submit = make("button", "Find plan-only window");
       submit.type = "submit";
       form.append(submit);
@@ -565,9 +691,17 @@
         try {
           const data = Object.fromEntries(new FormData(form).entries());
           data.duration_minutes = Number(data.duration_minutes);
-          data.average_power_kw = Number(data.average_power_kw);
+          if (data.energy_entity) {
+            delete data.average_power_kw;
+          } else {
+            data.average_power_kw = Number(data.average_power_kw);
+            if (!Number.isFinite(data.average_power_kw)) {
+              throw new Error("Enter an average power or select an energy meter.");
+            }
+          }
+          if (!data.energy_entity) delete data.energy_entity;
           if (this._config.entry_id) data.entry_id = this._config.entry_id;
-          await this._hass.callService(DOMAIN, SERVICE, data);
+          await this._hass.callService(DOMAIN, SERVICE, data, undefined, true, true);
         } catch (error) {
           this._renderMessage(`Could not request a plan: ${error.message || error}`, true);
         } finally {
@@ -576,6 +710,36 @@
       });
       const wrapper = make("div");
       wrapper.append(form, make("p", "Plan only: no appliance action is executed.", "form-note muted"));
+      return wrapper;
+    }
+
+    _energySources() {
+      return Object.entries(this._hass?.states || {})
+        .filter(([entityId, state]) => {
+          if (!entityId.startsWith("sensor.") || !state?.attributes) return false;
+          const unit = String(state.attributes.unit_of_measurement || "").replace(/\s/g, "").toLowerCase();
+          return state.attributes.device_class === "energy"
+            || ["wh", "kwh", "mwh", "w⋅h", "kw⋅h"].includes(unit);
+        })
+        .map(([entityId, state]) => ({
+          entity_id: entityId,
+          label: state.attributes.friendly_name || entityId,
+          unit: state.attributes.unit_of_measurement || "energy",
+        }))
+        .sort((left, right) => left.label.localeCompare(right.label));
+    }
+
+    _select(label, name, options) {
+      const wrapper = make("label", label);
+      const select = document.createElement("select");
+      select.name = name;
+      options.forEach(({ value, label: optionLabel }) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = optionLabel;
+        select.append(option);
+      });
+      wrapper.append(select);
       return wrapper;
     }
 

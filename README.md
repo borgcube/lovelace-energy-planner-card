@@ -37,6 +37,7 @@ last_plan_sensor: sensor.energy_planner_last_plan
 history_sensor: sensor.energy_planner_plan_history
 price_mode: all_in
 show_spot: true
+chart_type: bar # line, bar, or area
 ```
 
 The card also accepts `price_mode: spot`, an optional `entry_id`, and a
@@ -49,6 +50,13 @@ plan-only service. It does not start, switch, or schedule a device.
 The price chart is interactive: hover or drag across it to inspect a rate, and
 click a point to keep its interval and exact values visible below the chart.
 The plan-only form remains open while Home Assistant refreshes its state.
+Use `chart_type: line`, `chart_type: bar`, or `chart_type: area` to choose the
+visual style; `bar` is the default for interval prices.
+
+The plan form lists Home Assistant energy sensors as monitored devices. Select
+a Washing, Dryer, Oven, or other meter to estimate average power and active
+utilization from recorded history. Select **Custom appliance** to enter an
+average power manually when no energy meter is available.
 
 ## Migrating from the bundled card
 
