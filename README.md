@@ -42,6 +42,10 @@ higher-resolution points, including 15-minute ENTSO-E data.
 The form in the collapsed **Plan an appliance** section calls the integration's
 plan-only service. It does not start, switch, or schedule a device.
 
+The price chart is interactive: hover or drag across it to inspect a rate, and
+click a point to keep its interval and exact values visible below the chart.
+The plan-only form remains open while Home Assistant refreshes its state.
+
 ## Migrating from the bundled card
 
 The backend integration previously registered a card resource automatically.

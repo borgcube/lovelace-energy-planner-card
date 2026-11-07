@@ -1,7 +1,7 @@
 /*
  * Energy Planner Lovelace card
  * @customElement energy-planner-card
- * @version 1.1.0
+ * @version 1.2.0
  * @description Dependency-free, read-only price view with an explicit plan-only form.
  * Configure at least: { type: "custom:energy-planner-card", price_sensor: "sensor..." }.
  */
@@ -25,36 +25,53 @@
   const CSS = `
     :host { display: block; color: var(--primary-text-color); }
     ha-card { overflow: hidden; }
-    .wrap { padding: 16px; }
+    .wrap { padding: 12px; }
     h2, h3, p { margin: 0; }
     h2 { font-size: 1.15rem; margin-bottom: 8px; }
-    h3 { font-size: 1rem; margin: 18px 0 8px; }
+    h3 { font-size: 1rem; margin: 14px 0 6px; }
     .muted { color: var(--secondary-text-color); font-size: .85rem; }
     .status { display: inline-block; padding: 3px 8px; border-radius: 999px;
       background: var(--secondary-background-color); font-size: .78rem; }
     .summary, .plan { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
-    .metric { padding: 10px; border-radius: 8px; background: var(--secondary-background-color); }
+    .metric { padding: 8px; border-radius: 8px; background: var(--secondary-background-color); }
     .metric strong { display: block; font-size: 1.1rem; margin-top: 3px; }
     .timeline { margin-top: 4px; }
-    .price-chart { display: block; width: 100%; height: auto; min-height: 170px; overflow: visible; }
+    .price-chart { display: block; width: 100%; height: 300px; overflow: visible; touch-action: none; }
     .chart-grid { stroke: var(--divider-color); stroke-width: 1; stroke-dasharray: 2 4; }
+    .chart-zero { stroke: var(--secondary-text-color); stroke-dasharray: none; stroke-width: 1.4; opacity: .85; }
     .chart-axis { fill: var(--secondary-text-color); font-size: 11px; }
+    .chart-axis-zero { fill: var(--primary-text-color); font-weight: 600; }
+    .chart-day-divider { stroke: var(--divider-color); stroke-width: 1; stroke-dasharray: 3 5; opacity: .8; }
     .chart-area { fill: var(--accent-color); opacity: .14; }
     .chart-line { fill: none; stroke: var(--accent-color); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
     .chart-spot-line { fill: none; stroke: var(--secondary-text-color); stroke-width: 1.7; stroke-dasharray: 5 4; stroke-linecap: round; stroke-linejoin: round; }
     .chart-current { stroke: var(--primary-color); stroke-width: 1.5; stroke-dasharray: 4 3; }
     .chart-dot { fill: var(--accent-color); stroke: var(--card-background-color); stroke-width: 1; opacity: .9; }
     .chart-current-dot { fill: var(--primary-color); stroke: var(--card-background-color); stroke-width: 2; }
+    .chart-interaction { fill: transparent; cursor: crosshair; outline: none; }
+    .chart-interaction:focus-visible { stroke: var(--primary-color); stroke-width: 1; stroke-dasharray: 3 3; }
+    .chart-hover-line { stroke: var(--primary-color); stroke-width: 1.5; stroke-dasharray: 3 3; }
+    .chart-hover-dot { fill: var(--primary-color); stroke: var(--card-background-color); stroke-width: 2; }
+    .chart-tooltip { pointer-events: none; }
+    .chart-tooltip-box { fill: var(--card-background-color); stroke: var(--divider-color); stroke-width: 1; opacity: .96; }
+    .chart-tooltip-text { fill: var(--primary-text-color); font-size: 11px; }
+    .chart-tooltip-time { fill: var(--secondary-text-color); }
+    .chart-detail { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      margin-top: 8px; padding: 10px; border: 1px solid var(--divider-color); border-radius: 8px;
+      background: var(--secondary-background-color); }
+    .chart-detail-value { display: block; margin-top: 3px; font-size: .95rem; font-weight: 500; }
     .chart-legend { display: flex; flex-wrap: wrap; gap: 10px 14px; margin: 2px 0 4px; }
     .legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: .78rem; color: var(--secondary-text-color); }
     .legend-key { width: 18px; height: 3px; border-radius: 2px; background: var(--accent-color); }
     .legend-key.spot { height: 0; border-top: 2px dashed var(--secondary-text-color); background: transparent; }
     .chart-note { margin-top: 2px; }
-    details { margin-top: 18px; }
-    details > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      cursor: pointer; font-size: 1rem; font-weight: 500; }
-    details > summary::marker { color: var(--secondary-text-color); }
-    details[open] > summary { margin-bottom: 8px; }
+    .planner-toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      width: 100%; margin-top: 18px; padding: 10px 12px; color: inherit;
+      background: var(--secondary-background-color); border: 1px solid var(--divider-color);
+      text-align: left; }
+    .planner-toggle:hover { background: var(--primary-background-color); }
+    .planner-toggle .status { margin-left: auto; }
+    .planner-section { margin-top: 8px; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
       overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     form { display: grid; gap: 9px; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
@@ -127,6 +144,21 @@
     return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
 
+  function formatChartDate(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+
+  function chartDayKey(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? String(value).slice(0, 10)
+      : `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  }
+
   function svgElement(tag, attributes) {
     const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
     Object.entries(attributes || {}).forEach(([key, value]) => {
@@ -146,6 +178,7 @@
       super();
       this._config = null;
       this._hass = null;
+      this._plannerOpen = false;
       this._root = this.attachShadow({ mode: "open" });
       // This is also the safe first paint while Lovelace is attaching hass.
       this._renderMessage("Energy Planner is loading…");
@@ -211,11 +244,20 @@
 
       wrap.append(make("h3", "Latest plan"));
       wrap.append(this._planContext(lastAttrs, historyAttrs));
-      const planner = document.createElement("details");
-      const plannerSummary = document.createElement("summary");
-      plannerSummary.append(make("span", "Plan an appliance"), make("span", "Plan only", "status"));
-      planner.append(plannerSummary, this._planForm());
-      wrap.append(planner);
+      const plannerToggle = make("button", undefined, "planner-toggle");
+      plannerToggle.type = "button";
+      plannerToggle.setAttribute("aria-expanded", String(this._plannerOpen));
+      plannerToggle.append(make("span", "Plan an appliance"), make("span", "Plan only", "status"));
+      plannerToggle.addEventListener("click", () => {
+        this._plannerOpen = !this._plannerOpen;
+        this._render();
+      });
+      wrap.append(plannerToggle);
+      if (this._plannerOpen) {
+        const plannerSection = make("div", undefined, "planner-section");
+        plannerSection.append(this._planForm());
+        wrap.append(plannerSection);
+      }
       card.append(wrap);
       this._root.append(card);
     }
@@ -243,16 +285,20 @@
       ));
       const min = Math.min(...plottedValues);
       const max = Math.max(...plottedValues);
+      const range = Math.max(max - min, 0.001);
+      const padding = range * 0.1;
+      const domainMin = min < 0 ? Math.min(0, min - padding) : min - padding;
+      const domainMax = max + padding;
       const width = 720;
-      const height = 210;
+      const height = 300;
       const left = 50;
       const right = 12;
       const top = 14;
-      const bottom = 34;
+      const bottom = 56;
       const plotWidth = width - left - right;
       const plotHeight = height - top - bottom;
       const x = (index) => left + (index / Math.max(1, mainSeries.length - 1)) * plotWidth;
-      const y = (value) => top + ((max - value) / (max - min || 1)) * plotHeight;
+      const y = (value) => top + ((domainMax - value) / (domainMax - domainMin || 1)) * plotHeight;
       const mainPath = mainSeries.map((item, index) => `${index ? "L" : "M"}${x(index)} ${y(item.value)}`).join(" ");
       const areaPath = `${mainPath} L${x(mainSeries.length - 1)} ${top + plotHeight} L${x(0)} ${top + plotHeight} Z`;
       const svg = svgElement("svg", {
@@ -265,20 +311,51 @@
       title.textContent = "Electricity price timeline";
       svg.append(title);
 
-      for (let tick = 0; tick <= 3; tick += 1) {
-        const value = max - ((max - min) * tick / 3);
-        const yPosition = top + (plotHeight * tick / 3);
+      const tickValues = [...new Set(
+        Array.from({ length: 5 }, (_, tick) => domainMax - ((domainMax - domainMin) * tick / 4))
+          .concat(domainMin <= 0 && domainMax >= 0 ? [0] : [])
+          .map((value) => Number(value.toFixed(6))),
+      )].sort((a, b) => b - a);
+      tickValues.forEach((value) => {
+        const yPosition = y(value);
+        const isZero = value === 0;
         svg.append(
-          svgElement("line", { class: "chart-grid", x1: left, x2: width - right, y1: yPosition, y2: yPosition }),
-          svgElement("text", { class: "chart-axis", x: left - 8, y: yPosition + 4, "text-anchor": "end" }),
+          svgElement("line", { class: isZero ? "chart-grid chart-zero" : "chart-grid", x1: left, x2: width - right, y1: yPosition, y2: yPosition }),
+          svgElement("text", { class: isZero ? "chart-axis chart-axis-zero" : "chart-axis", x: left - 8, y: yPosition + 4, "text-anchor": "end" }),
         );
         svg.lastChild.textContent = value.toFixed(3);
-      }
+      });
 
       const tickIndexes = [...new Set([0, Math.floor((mainSeries.length - 1) / 3), Math.floor((mainSeries.length - 1) * 2 / 3), mainSeries.length - 1])];
       tickIndexes.forEach((index) => {
-        const label = svgElement("text", { class: "chart-axis", x: x(index), y: height - 10, "text-anchor": "middle" });
+        const label = svgElement("text", { class: "chart-axis", x: x(index), y: height - 28, "text-anchor": "middle" });
         label.textContent = formatChartTime(mainSeries[index].point.start_time);
+        svg.append(label);
+      });
+
+      const dayIndexes = [];
+      const seenDays = new Set();
+      mainSeries.forEach((item, index) => {
+        const day = chartDayKey(item.point.start_time);
+        if (!seenDays.has(day)) {
+          seenDays.add(day);
+          dayIndexes.push(index);
+        }
+      });
+      dayIndexes.forEach((index, dayIndex) => {
+        if (dayIndex > 0) {
+          svg.append(svgElement("line", {
+            class: "chart-day-divider",
+            x1: x(index), x2: x(index), y1: top, y2: top + plotHeight,
+          }));
+        }
+        const label = svgElement("text", {
+          class: "chart-axis",
+          x: x(index),
+          y: height - 9,
+          "text-anchor": index === 0 ? "start" : "middle",
+        });
+        label.textContent = formatChartDate(mainSeries[index].point.start_time);
         svg.append(label);
       });
 
@@ -317,6 +394,124 @@
         svg.append(currentLabel);
       }
 
+      const hoverLayer = svgElement("g", { visibility: "hidden" });
+      const hoverLine = svgElement("line", { class: "chart-hover-line", x1: left, x2: left, y1: top, y2: top + plotHeight });
+      const hoverDot = svgElement("circle", { class: "chart-hover-dot", cx: left, cy: y(mainSeries[0].value), r: 4 });
+      const tooltip = svgElement("g", { class: "chart-tooltip" });
+      const tooltipBox = svgElement("rect", { class: "chart-tooltip-box", x: 0, y: 0, width: 174, height: showSpot ? 60 : 44, rx: 5 });
+      const tooltipTime = svgElement("text", { class: "chart-tooltip-text chart-tooltip-time", x: 10, y: 16 });
+      const tooltipMain = svgElement("text", { class: "chart-tooltip-text", x: 10, y: 34 });
+      const tooltipSpot = svgElement("text", { class: "chart-tooltip-text", x: 10, y: 51 });
+      tooltip.append(tooltipBox, tooltipTime, tooltipMain);
+      if (showSpot) tooltip.append(tooltipSpot);
+      hoverLayer.append(hoverLine, hoverDot, tooltip);
+      svg.append(hoverLayer);
+
+      const liveRegion = make("div", "", "sr-only");
+      liveRegion.setAttribute("role", "status");
+      liveRegion.setAttribute("aria-live", "polite");
+      const detail = make("div", undefined, "chart-detail");
+      const detailTime = make("strong", "—", "chart-detail-value");
+      const detailPrice = make("strong", "—", "chart-detail-value");
+      const detailSpot = make("strong", "—", "chart-detail-value");
+      const detailBlock = (label, value) => {
+        const block = make("div");
+        block.append(make("span", label, "muted"), value);
+        return block;
+      };
+      detail.append(
+        detailBlock("Selected interval", detailTime),
+        detailBlock(this._config.price_mode === "spot" ? "Spot price" : "All-in price", detailPrice),
+        detailBlock("Spot comparison", detailSpot),
+      );
+      let selectedIndex = null;
+      const clamp = (value, lower, upper) => Math.min(upper, Math.max(lower, value));
+      const eventIndex = (event) => {
+        const bounds = svg.getBoundingClientRect();
+        const svgX = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * width;
+        return clamp(Math.round(((svgX - left) / plotWidth) * Math.max(1, mainSeries.length - 1)), 0, mainSeries.length - 1);
+      };
+      const updateHover = (index) => {
+        const item = mainSeries[index];
+        const pointX = x(index);
+        const pointY = y(item.value);
+        const tooltipWidth = 174;
+        const tooltipHeight = showSpot ? 60 : 44;
+        const tooltipX = clamp(pointX + 8, left, width - right - tooltipWidth);
+        const tooltipY = clamp(pointY - tooltipHeight - 10, top, top + plotHeight - tooltipHeight);
+        hoverLine.setAttribute("x1", pointX);
+        hoverLine.setAttribute("x2", pointX);
+        hoverDot.setAttribute("cx", pointX);
+        hoverDot.setAttribute("cy", pointY);
+        tooltip.setAttribute("transform", `translate(${tooltipX}, ${tooltipY})`);
+        tooltipBox.setAttribute("height", tooltipHeight);
+        tooltipTime.textContent = `${formatChartDate(item.point.start_time)} · ${formatChartTime(item.point.start_time)}`;
+        tooltipMain.textContent = `${this._config.price_mode === "spot" ? "Spot" : "All-in"}: ${formatPrice(item.value, this._config.currency)}`;
+        if (showSpot) tooltipSpot.textContent = `Spot: ${formatPrice(item.spot, this._config.currency)}`;
+        detailTime.textContent = `${formatTime(item.point.start_time)} → ${formatTime(item.point.end_time)}`;
+        detailPrice.textContent = formatPrice(item.value, this._config.currency);
+        detailSpot.textContent = showSpot && item.spot !== null
+          ? formatPrice(item.spot, this._config.currency)
+          : "—";
+        liveRegion.textContent = `${formatTime(item.point.start_time)}: ${formatPrice(item.value, this._config.currency)}${showSpot ? `, spot ${formatPrice(item.spot, this._config.currency)}` : ""}`;
+        hoverLayer.setAttribute("visibility", "visible");
+      };
+      const clearHover = () => {
+        if (selectedIndex === null) hoverLayer.setAttribute("visibility", "hidden");
+      };
+      const interaction = svgElement("rect", {
+        class: "chart-interaction",
+        x: left,
+        y: top,
+        width: plotWidth,
+        height: plotHeight,
+        tabindex: "0",
+        role: "button",
+        "aria-label": "Interactive price timeline; move across the chart to inspect each rate",
+      });
+      interaction.addEventListener("pointermove", (event) => updateHover(eventIndex(event)));
+      interaction.addEventListener("pointerleave", clearHover);
+      interaction.addEventListener("pointerdown", (event) => {
+        selectedIndex = eventIndex(event);
+        interaction.setPointerCapture?.(event.pointerId);
+        updateHover(selectedIndex);
+      });
+      interaction.addEventListener("pointerup", (event) => {
+        selectedIndex = eventIndex(event);
+        interaction.releasePointerCapture?.(event.pointerId);
+        updateHover(selectedIndex);
+      });
+      interaction.addEventListener("click", (event) => {
+        selectedIndex = eventIndex(event);
+        updateHover(selectedIndex);
+      });
+      interaction.addEventListener("focus", () => updateHover(selectedIndex ?? (currentIndex >= 0 ? currentIndex : 0)));
+      interaction.addEventListener("keydown", (event) => {
+        if (["Enter", " "].includes(event.key)) {
+          event.preventDefault();
+          selectedIndex = selectedIndex ?? (currentIndex >= 0 ? currentIndex : 0);
+          updateHover(selectedIndex);
+          return;
+        }
+        if (!["ArrowLeft", "ArrowRight", "Home", "End", "Escape"].includes(event.key)) return;
+        event.preventDefault();
+        if (event.key === "Escape") {
+          selectedIndex = null;
+          clearHover();
+          return;
+        }
+        const current = selectedIndex ?? (currentIndex >= 0 ? currentIndex : 0);
+        selectedIndex = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? mainSeries.length - 1
+            : clamp(current + (event.key === "ArrowRight" ? 1 : -1), 0, mainSeries.length - 1);
+        updateHover(selectedIndex);
+      });
+      svg.append(interaction);
+      updateHover(currentIndex >= 0 ? currentIndex : 0);
+      hoverLayer.setAttribute("visibility", "hidden");
+
       const accessiblePoints = make("ul", undefined, "sr-only");
       accessiblePoints.setAttribute("aria-label", "Price timeline details");
       mainSeries.forEach((item) => {
@@ -328,7 +523,7 @@
       const legend = make("div", undefined, "chart-legend");
       legend.append(this._legendItem(this._config.price_mode === "spot" ? "Spot" : "All-in", "all-in"));
       if (showSpot) legend.append(this._legendItem("Spot", "spot"));
-      timeline.append(legend, make("p", "Hover a point for its exact price; the current slot is marked Now.", "muted chart-note"), accessiblePoints);
+      timeline.append(detail, legend, make("p", "Hover or drag across the chart; click a point to keep its rate visible.", "muted chart-note"), liveRegion, accessiblePoints);
       return timeline;
     }
 
