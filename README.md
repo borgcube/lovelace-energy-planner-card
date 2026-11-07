@@ -1,5 +1,9 @@
 # Energy Planner Card
 
+<p align="center">
+  <img src="logo.png" alt="Energy Planner Card logo" width="160">
+</p>
+
 The Energy Planner Card is a dependency-free Home Assistant Lovelace card for
 the [Energy Planner integration](https://github.com/borgcube/home-assistant-energy-planner).
 It presents the adjusted electricity-price timeline as a compact chart, keeps
